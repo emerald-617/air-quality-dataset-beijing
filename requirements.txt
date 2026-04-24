@@ -1,0 +1,17 @@
+# Data Science
+numpy==2.0.2
+pandas==2.3.3
+
+# Streamlit
+streamlit==1.50.0
+streamlit-option-menu==0.4.0
+plotly
+
+# Data Visualisation
+seaborn==0.13.2
+matplotlib==3.9.4
+geopy
+folium
+
+# Utilities
+jupyter
