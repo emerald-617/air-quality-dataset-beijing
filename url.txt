@@ -1,1 +1,1 @@
-https://emerald-617-air-quality-dataset-beijing-dashboard.streamlit.app/
+https://air-quality-dataset-beijing-dashboard-emerald617.streamlit.app/
