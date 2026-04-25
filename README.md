@@ -48,22 +48,22 @@ submission
 ├───notebook.ipynb
 ├───README.md
 └───requirements.txt
-└───url.txt
+├───url.txt
 ├───data
-| ├─── df_daily_station.csv
-| ├─── df_map.csv
-| ├─── Air-quality-dataset
-|   ├─── PRSA_Data_20130301-20170228
-|     ├─── PRSA_Data_Aotizhongxin_20130301-20170228
-|     ├─── PRSA_Data_Changping_20130301-20170228
-|     ├─── PRSA_Data_Dingling_20130301-20170228
-|     ├─── PRSA_Data_Dongsi_20130301-20170228
-|     ├─── PRSA_Data_Guanyuan_20130301-20170228
-|     ├─── PRSA_Data_Gucheng_20130301-20170228
-|     ├─── PRSA_Data_Hauairou_20130301-20170228
-|     ├─── PRSA_Data_Nongzhanguan_20130301-20170228
-|     ├─── PRSA_Data_Shunyi_20130301-20170228
-|     ├─── PRSA_Data_Tiantan_20130301-20170228
-|     ├─── PRSA_Data_Wanliu_20130301-20170228
-|     ├─── PRSA_Data_Wanshouxigong_20130301-20170228
+| ├───df_daily_station.csv
+| ├───df_map.csv
+| └───Air-quality-dataset
+|   └───PRSA_Data_20130301-20170228
+|     ├───PRSA_Data_Aotizhongxin_20130301-20170228
+|     ├───PRSA_Data_Changping_20130301-20170228
+|     ├───PRSA_Data_Dingling_20130301-20170228
+|     ├───PRSA_Data_Dongsi_20130301-20170228
+|     ├───PRSA_Data_Guanyuan_20130301-20170228
+|     ├───PRSA_Data_Gucheng_20130301-20170228
+|     ├───PRSA_Data_Hauairou_20130301-20170228
+|     ├───PRSA_Data_Nongzhanguan_20130301-20170228
+|     ├───PRSA_Data_Shunyi_20130301-20170228
+|     ├───PRSA_Data_Tiantan_20130301-20170228
+|     ├───PRSA_Data_Wanliu_20130301-20170228
+|     └───PRSA_Data_Wanshouxigong_20130301-20170228
 ```
