@@ -5,6 +5,7 @@ pandas==2.3.3
 # Streamlit
 streamlit==1.50.0
 streamlit-option-menu==0.4.0
+streamlit_folium
 plotly
 
 # Data Visualisation

@@ -2,6 +2,9 @@
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
+from matplotlib.patches import Patch
+import seaborn as sns
 import streamlit as st
 import plotly.express as px
 import folium
@@ -47,6 +50,13 @@ AQI_LABELS = [
     "Excellent", "Good", "Lightly Polluted",
     "Moderately Polluted", "Heavily Polluted", "Severely Polluted",
 ]
+AQI_LEVELS = [
+    (50, "Excellent"),
+    (100, "Good"),
+    (150, "Lightly Polluted"),
+    (200, "Moderately Polluted"),
+    (300, "Heavily Polluted"),
+]
 AQI_COLORS  = ["#328b36", "#66bb6a", "#ffa726", "#e35c5a", "#ab47bc", "#941212"]
 AQI_PALETTE = dict(zip(AQI_LABELS, AQI_COLORS))
 
@@ -54,38 +64,19 @@ POLLUTANTS    = ["PM2.5", "PM10", "SO2", "NO2", "CO", "O3"]
 WEATHER_VARS  = ["TEMP", "PRES", "DEWP", "RAIN", "WSPM"]
 
 SEASON_MAPPING = {
-    3: "Spring", 4: "Spring",  5: "Spring",
-    6: "Summer", 7: "Summer",  8: "Summer",
-    9: "Autumn", 10: "Autumn", 11: "Autumn",
-    12: "Winter", 1: "Winter",  2: "Winter",
+    3: 'Spring', 4: 'Spring', 5: 'Spring',
+    6: 'Summer', 7: 'Summer', 8: 'Summer',
+    9: 'Autumn', 10: 'Autumn', 11: 'Autumn',
+    12: 'Winter', 1: 'Winter', 2: 'Winter'
 }
 
-STATION_COORDS = {
-    "Aotizhongxin":  (39.982, 116.397),
-    "Changping":     (40.217, 116.231),
-    "Dingling":      (40.292, 116.220),
-    "Dongsi":        (39.929, 116.417),
-    "Guanyuan":      (39.933, 116.339),
-    "Gucheng":       (39.914, 116.184),
-    "Huairou":       (40.357, 116.628),
-    "Nongzhanguan":  (39.937, 116.461),
-    "Shunyi":        (40.127, 116.655),
-    "Tiantan":       (39.886, 116.407),
-    "Wanliu":        (39.987, 116.306),
-    "Wanshouxigong": (39.878, 116.352),
-}
+SEASON_ORDERS = ['Spring', 'Summer', 'Autumn', 'Winter']
 
+COLS = POLLUTANTS + WEATHER_VARS
+COLS.append("AQI")
 
 # === HELPERS =========================================================
 @st.cache_data
-def load_data():
-    df_all     = pd.read_csv("data/df_all.csv",               parse_dates=["date"])
-    df_daily   = pd.read_csv("data/df_agregasi.csv",          parse_dates=["date"])
-    df_monthly = pd.read_csv("data/df_monthly_station.csv",   parse_dates=["year_month"])
-    df_all["season"] = df_all["month"].map(SEASON_MAPPING)
-    return df_all, df_daily, df_monthly
-
-
 def filter_daily(df: pd.DataFrame, start_date, end_date, stations: list) -> pd.DataFrame:
     """Filter df_daily by date range and station list."""
     mask = (df["date"] >= pd.Timestamp(start_date)) & (df["date"] <= pd.Timestamp(end_date))
@@ -138,8 +129,8 @@ def render_card(title, value, desc, delta_text, border_color, delta_color) -> st
 
 
 # === LOAD DATA =======================================================
-df_all, df_daily, df_monthly = load_data()
-
+df_daily   = pd.read_csv("data/df_daily_station.csv", parse_dates=["date"])
+df_map = pd.read_csv("data/df_map.csv")
 
 # === SIDEBAR — FILTER ================================================
 with st.sidebar:
@@ -155,7 +146,6 @@ with st.sidebar:
         value=[min_date, max_date],
     )
 
-    # Guard: user may not have finished picking both dates
     if isinstance(date_range, (list, tuple)) and len(date_range) == 2:
         start_date, end_date = date_range
     else:
@@ -163,29 +153,89 @@ with st.sidebar:
 
     all_stations  = df_daily["station"].unique().tolist()
     station_opts  = ["Semua"] + all_stations
-    selected_stations = st.multiselect("Stasiun", station_opts, default="Dongsi")
+    selected_stations = st.multiselect("Stasiun", station_opts, default="Semua")
+
+    if not selected_stations:
+        st.warning("Pilih minimal satu stasiun.")
+        st.stop()
+
+    granularity = st.selectbox("Granularitas", ["Daily", "Monthly", "Yearly"], index=1)
 
     st.caption("Air Quality Dataset")
 
 
 # === APPLY FILTER ====================================================
-df_filtered = filter_daily(df_daily, start_date, end_date, selected_stations)
+df_daily_filter = filter_daily(df_daily, start_date, end_date, selected_stations)
+df_daily_filter['year_month'] = df_daily_filter['date'].dt.to_period('M')
+
+df_monthly_filtered = (
+    df_daily_filter.groupby(['station', 'year_month'])[COLS]
+    .mean()
+    .reset_index()
+)
+df_monthly_filtered['year_month'] = df_monthly_filtered['year_month'].dt.to_timestamp()
+df_monthly_filtered.rename(columns={'year_month': 'date'}, inplace=True)
+df_monthly_filtered = df_monthly_filtered.sort_values(by=["station","date"]).reset_index()
+df_monthly_filtered.drop(columns="index", inplace=True)
+df_monthly_filtered['month'] = df_monthly_filtered['date'].dt.month
+
+df_monthly_filtered['AQI_cat'] = pd.cut(
+    df_monthly_filtered['AQI'],
+    bins=AQI_BINS,
+    labels=AQI_LABELS,
+    right=True   
+)
+
+df_yearly_filtered = (
+    df_daily_filter.groupby(['station', 'year'])[COLS]
+    .mean()
+    .reset_index()
+)
+df_yearly_filtered['date'] = pd.to_datetime(df_yearly_filtered["year"], format="%Y")
+df_yearly_filtered['AQI_cat'] = pd.cut(
+    df_yearly_filtered['AQI'],
+    bins=AQI_BINS,
+    labels=AQI_LABELS,
+    right=True   
+)
+
+if granularity == "Daily":
+    df_filter = df_daily_filter.copy()
+    gran = "Hari"
+    time_group = "date"
+elif granularity == "Monthly":
+    df_filter = df_monthly_filtered.copy()
+    gran = "Bulan"
+    time_group = "month"
+else:
+    df_filter = df_yearly_filtered.copy()
+    gran = "Tahun"
+    time_group = "year"
 
 
-# === TABS ============================================================
-tab_ringkasan, tab_tren, tab_peta = st.tabs(["Ringkasan", "Tren Waktu", "Peta"])
+# === TABS ====================================================
+tab_ringkasan, tab_perbandingan, tab_korelasi = st.tabs(["Ringkasan", "Perbandingan Stasiun", "Analisis Korelasi"])
 
 
-# === TAB 1 : RINGKASAN ===============================================
+# === TAB 1 : RINGKASAN ====================================================
 with tab_ringkasan:
+    # Indikator utamta
     st.subheader("Indikator Utama")
 
-    total_days            = len(df_filtered)
-    avg_aqi               = df_filtered["AQI"].mean().round(2) if total_days else 0
-    high_days             = int((df_filtered["AQI"] > 150).sum())
-    low_days              = int((df_filtered["AQI"] <= 150).sum())
-    high_pct              = high_days / total_days if total_days else 0
-    low_pct               = low_days  / total_days if total_days else 0
+    df_all = (
+        df_filter.groupby('date')[COLS]
+        .mean()
+        .reset_index()
+    )
+    df_all['month'] = df_all['date'].dt.month
+    df_all['year'] = df_all['date'].dt.year
+
+    total_aqi            = len(df_all)
+    avg_aqi               = df_all["AQI"].mean().round(2) if total_aqi else 0
+    high_aqi             = int((df_all["AQI"] > 150).sum())
+    low_aqi              = int((df_all["AQI"] <= 150).sum())
+    high_pct              = high_aqi / total_aqi if total_aqi else 0
+    low_pct               = low_aqi  / total_aqi if total_aqi else 0
 
     style = get_aqi_style(avg_aqi)
 
@@ -204,8 +254,8 @@ with tab_ringkasan:
     with col2:
         st.markdown(
             render_card(
-                "Hari Polusi Tinggi", high_days,
-                "hari dengan AQI > 150", f"{high_pct:.2%} dari total hari",
+                f"{gran} Polusi Tinggi", high_aqi,
+                f"{gran} dengan AQI > 150", f"{high_pct:.2%} dari total {gran}",
                 "#e53e3e", "#e53e3e",
             ), unsafe_allow_html=True
         )
@@ -213,42 +263,63 @@ with tab_ringkasan:
     with col3:
         st.markdown(
             render_card(
-                "Hari Polusi Rendah", low_days,
-                "hari dengan AQI ≤ 150", f"{low_pct:.2%} dari total hari",
+                f"{gran} Polusi Rendah", low_aqi,
+                f"{gran} dengan AQI ≤ 150", f"{low_pct:.2%} dari total {gran}",
                 "#38a169", "#38a169",
             ), unsafe_allow_html=True
         )
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # --- Tren AQI Bulanan ---
-    st.subheader("Tren AQI Bulanan")
+    # Time series tren AQI
+    st.subheader(f"Tren AQI {gran}an")
     st.caption("Rata-rata berdasarkan filter aktif")
 
-    ts_df = df_filtered.copy()
-    ts_df["time"] = ts_df["date"].dt.to_period("M").dt.to_timestamp()
-    ts_df = ts_df.groupby("time")["AQI"].mean().reset_index().sort_values("time")
+    ts_df = df_all.copy()
+    ts_df = ts_df.sort_values("date").reset_index()
+    ts_df.drop(columns="index", inplace=True)
 
-    CHART_HEIGHT = 320
-
-    fig, ax = plt.subplots(figsize=(12, CHART_HEIGHT / 96))   # 96 dpi default
-    ax.plot(ts_df["time"], ts_df["AQI"], linewidth=1.4, color="steelblue")
+    fig, ax = plt.subplots(figsize=(12, 4))
+    ax.plot(ts_df["date"], ts_df["AQI"], linewidth=1.4, color="steelblue")
+    for j, (level, label) in enumerate(AQI_LEVELS):
+        ax.axhline(
+            y=level,
+            linestyle='--',
+            color=AQI_COLORS[j],
+            alpha=0.7
+        )
+    
     ax.set_ylabel("AQI")
-    ax.set_xlabel("Tanggal")
+    ax.set_xlabel("Waktu")
     ax.grid(True, alpha=0.3)
+
+    legend_lines = [
+        Line2D([0], [0], color=AQI_COLORS[i], lw=1.5, linestyle='--', label=label)
+        for i, (_, label) in enumerate(AQI_LEVELS)
+    ]
+
+    fig.legend(
+        handles=legend_lines,
+        title="AQI Category",
+        loc='lower center',
+        bbox_to_anchor=(0.5, -0.02),
+        ncol=len(AQI_LEVELS)
+    )
+
     fig.tight_layout()
     st.pyplot(fig)
     plt.close()
 
+    # Distribusi Kategori AQI
     st.subheader("Distribusi Kategori AQI")
-    st.caption("Proporsi hari per kategori")
+    st.caption("Distribusi hari per kategori")
 
-    df_filtered["AQI_cat"] = pd.cut(
-        df_filtered["AQI"], bins=AQI_BINS,
+    df_all["AQI_cat"] = pd.cut(
+        df_all["AQI"], bins=AQI_BINS,
         labels=AQI_LABELS, right=True, include_lowest=True,
     )
     dist = (
-        df_filtered["AQI_cat"]
+        df_all["AQI_cat"]
         .value_counts(normalize=True)
         .mul(100)
         .reindex(AQI_LABELS, fill_value=0)
@@ -260,9 +331,7 @@ with tab_ringkasan:
     dist["Kategori"] = pd.Categorical(dist["Kategori"], categories=AQI_LABELS, ordered=True)
     dist = dist.sort_values("Kategori")
 
-
-    # --- donut ---
-    h_in   = CHART_HEIGHT / 96
+    h_in   = 3
     fig_pie, (ax_pie, ax_leg) = plt.subplots(
         1, 2, figsize=(h_in * 2, h_in),
         gridspec_kw={"width_ratios": [1, 1]}
@@ -296,27 +365,55 @@ with tab_ringkasan:
     st.pyplot(fig_pie)
     plt.close(fig_pie)
 
+    # Proporsi Kategori AQI
+    if granularity != "Daily":
+        st.subheader(f"Proporsi Kategori AQI Berdasarkan {gran}")
 
-# === TAB 2 : TREN WAKTU ==============================================
-with tab_tren:
-    st.title("📈 Time Series Plot")
+        prop = pd.crosstab(
+            df_all[time_group],
+            df_all["AQI_cat"],
+            normalize="index"
+        ) * 100
+        prop = prop.reindex(columns=AQI_LABELS, fill_value=0)
+        prop = prop.sort_index()
 
-    col1, col2 = st.columns([2, 1])
-    with col1:
-        ts_vars = st.multiselect(
-            "Variabel yang ditampilkan",
-            options=POLLUTANTS + WEATHER_VARS + ["AQI"],
-            default=["AQI", "PM2.5"],
+        fig, ax = plt.subplots(figsize=(12, 6))
+
+        prop.plot(
+            kind="bar",
+            stacked=True,
+            ax=ax,
+            color=['green', 'lime', 'orange', 'red', 'purple', 'black']
         )
-    with col2:
-        granularity = st.selectbox("Granularitas", ["Daily", "Monthly", "Yearly"])
 
+        ax.set_title(f"Distribusi Kategori AQI ({gran}) (%)")
+        ax.set_xlabel("Waktu")
+        ax.set_ylabel("Persentase (%)")
+        ax.legend(title="AQI Category", bbox_to_anchor=(1.05, 1))
+
+        plt.tight_layout()
+        st.pyplot(fig)
+
+    # Data
+    st.subheader(f"Data Air Quality {gran}an")
+    st.write(df_all)
+
+
+# === TAB 2 : PERBANDINGAN ANTARSTASIUN ==============================================
+with tab_perbandingan:
+    # Time series plot per parameter
+    st.subheader("Time Series Plot Berdasarkan Parameter")
+
+    ts_vars = st.multiselect(
+        "Parameter yang ditampilkan",
+        options=POLLUTANTS + WEATHER_VARS + ["AQI"],
+        default=["AQI", "PM2.5"],
+    )
     if not ts_vars:
-        st.warning("Pilih minimal satu variabel.")
+        st.warning("Pilih minimal satu parameter.")
         st.stop()
 
-    # Gunakan df_filtered (sudah terfilter tanggal & stasiun)
-    ts_src = df_filtered.copy()
+    ts_src = df_filter.copy()
 
     available_vars = [v for v in ts_vars if v in ts_src.columns]
 
@@ -347,38 +444,162 @@ with tab_tren:
     st.pyplot(fig)
     plt.close()
 
+    # Time series plot per stasiun
+    st.subheader("Time Series Plot AQI Berdasarkan Stasiun")
+    st.caption("Filter stasiun pada sidebar")        
 
-# === TAB 3 : PETA ====================================================
-with tab_peta:
-    st.title("🗺️ Peta Stasiun")
+    df_stasiun = df_filter.copy()
 
-    map_metric = st.selectbox(
-        "Pilih metrik yang ditampilkan pada peta",
-        ["AQI"] + POLLUTANTS + WEATHER_VARS,
+    stations = df_stasiun["station"].unique()
+    n_station = len(stations)
+
+    fig, axes = plt.subplots(n_station, 1, figsize=(15, 6 * n_station), sharex=True)
+    axes = axes.flatten()
+
+    for i, station_name in enumerate(stations):
+
+        df_st = df_stasiun[df_stasiun['station'] == station_name]
+        
+        axes[i].plot(df_st['date'], df_st['AQI'], marker='o')
+        axes[i].set_title(f"Time Series Rata-rata Bulanan AQI Stasiun {station_name}")
+        axes[i].set_ylabel("AQI")
+
+        for j, (level, label) in enumerate(AQI_LEVELS):
+            axes[i].axhline(
+                y=level,
+                linestyle='--',
+                color=AQI_COLORS[j],
+                alpha=0.7
+            )
+
+    for j in range(len(stations), len(axes)):
+        fig.delaxes(axes[j])
+
+    legend_lines = [
+        Line2D([0], [0], color=AQI_COLORS[i], lw=1.5, linestyle='--', label=label)
+        for i, (_, label) in enumerate(AQI_LEVELS)
+    ]
+
+    fig.legend(
+        handles=legend_lines,
+        title="AQI Category",
+        loc='lower center',
+        bbox_to_anchor=(0.5, -0.02),
+        ncol=len(AQI_LEVELS)
     )
 
-    # Agregasi metric per stasiun dari df_filtered
-    metric_col = map_metric if map_metric in df_filtered.columns else "AQI"
-    station_metric = (
-        df_filtered.groupby("station")[metric_col]
+    plt.xlabel("Waktu")
+    plt.xticks(rotation=45)
+    plt.tight_layout()
+
+    st.pyplot(fig)
+
+
+    # Perbandingan jumlah hari
+    st.subheader("Perbandingan Proporsi Kategori AQI per Stasiun")
+    
+    fig, axes = plt.subplots(4, 3, figsize=(15, 12))
+    axes = axes.flatten()
+
+    df_perbandingan = df_filter.copy()
+    df_perbandingan['AQI_cat'] = pd.cut(
+        df_perbandingan['AQI'],
+        bins=AQI_BINS,
+        labels=AQI_LABELS,
+        right=True   
+    )    
+
+    for i, st_name in enumerate(stations):
+        df_st = df_perbandingan[df_perbandingan['station'] == st_name]
+
+        dist = df_st['AQI_cat'].value_counts(normalize=True) * 100
+        dist = dist.reindex(AQI_LABELS, fill_value=0)
+
+        max_idx = dist.values.argmax()
+        colors_bar1 = ['#D3D3D3'] * len(dist)
+        colors_bar1[max_idx] = '#5774B7'
+
+        axes[i].barh(dist.index, dist.values, color=colors_bar1)
+        axes[i].set_title(st_name)
+        axes[i].tick_params(axis='x', rotation=45)
+
+    for j in range(len(stations), len(axes)):
+        fig.delaxes(axes[j])
+
+    plt.tight_layout()
+    st.pyplot(fig)
+
+
+    # Peta analisis geospatial
+    st.subheader("Peta Beijing")
+
+    metric_col = st.selectbox(
+        "Pilih metrik yang ditampilkan pada peta",
+        ["AQI"] + ['Perubahan AQI (%)'] + POLLUTANTS + WEATHER_VARS,
+    )
+
+    df_map.drop(columns=["AQI_2013", "AQI_2017", "delta_AQI", "pct_change"], inplace=True)
+    df_delta = df_map.copy()
+
+    start_year = df_filter['date'].dt.year.min()
+    end_year   = df_filter['date'].dt.year.max()
+    
+    aqi_min = (
+        df_filter[df_filter['date'].dt.year == start_year]
+        .groupby('station')['AQI']
         .mean()
         .reset_index()
-        .rename(columns={metric_col: "value"})
+        .rename(columns={'AQI': 'AQI_min'})
     )
 
-    # Tambahkan koordinat
-    station_metric["lat"] = station_metric["station"].map(lambda x: STATION_COORDS.get(x, (np.nan, np.nan))[0])
-    station_metric["lon"] = station_metric["station"].map(lambda x: STATION_COORDS.get(x, (np.nan, np.nan))[1])
-    map_df = station_metric.dropna(subset=["lat", "lon", "value"])
+    aqi_max = (
+        df_filter[df_filter['date'].dt.year == end_year]
+        .groupby('station')['AQI']
+        .mean()
+        .reset_index()
+        .rename(columns={'AQI': 'AQI_max'})
+    )
 
+    df_delta = df_delta.merge(aqi_min, on='station', how='left')
+    df_delta = df_delta.merge(aqi_max, on='station', how='left')
+
+    df_delta['delta_AQI'] = df_delta['AQI_max'] - df_delta['AQI_min']
+    df_delta['Perubahan AQI (%)'] = (
+        (df_delta['AQI_max'] - df_delta['AQI_min']) /
+        df_delta['AQI_min']
+    ) * 100
+
+    all_map_metric = ["AQI"] + POLLUTANTS + WEATHER_VARS
+    station_metric = (
+        df_filter.groupby("station")[all_map_metric]
+        .mean()
+        .reset_index()
+    )
+
+    df_delta = df_delta.merge(station_metric, on='station', how='left')
+    
     # Folium map
-    center_lat = map_df["lat"].mean()
-    center_lon = map_df["lon"].mean()
+    cols_map = ["station","lat","lon",metric_col]
+    df_map = df_delta[cols_map]
+    df_map.dropna(inplace=True)
+
+    center_lat = df_map["lat"].mean()
+    center_lon = df_map["lon"].mean()
     m = folium.Map(location=[center_lat, center_lon], zoom_start=10, tiles="CartoDB positron")
 
-    for _, row in map_df.iterrows():
-        val    = row["value"]
-        color  = aqi_color(val) if metric_col == "AQI" else "steelblue"
+    for _, row in df_map.iterrows():
+        val    = row[metric_col]
+        
+        #warna
+        if metric_col == "AQI":
+            map_color = aqi_color(val)
+        elif metric_col == metric_col:
+            delta = row[metric_col]
+            map_color = 'green' if delta < 0 else 'red'
+        else:
+            map_color = "steelblue"
+        
+        color  = map_color
         radius = max(6, min(30, val / 8)) if metric_col == "AQI" else 10
         folium.CircleMarker(
             location=[row["lat"], row["lon"]],
@@ -403,16 +624,201 @@ with tab_peta:
             )
         legend_html += "</div>"
         m.get_root().html.add_child(folium.Element(legend_html))
-
+    elif metric_col == "Perubahan AQI (%)":
+        legend_html = """
+        <div style="position: fixed; bottom: 30px; left: 30px; z-index:1000; background-color:white;padding: 10px; border-radius: 8px; font-size: 13px;">
+        <b>Perubahan AQI 2013-2017</b><br>
+        <i style="background:green;width:12px;height:12px;display:inline-block"></i> Kualitas Udara Membaik (% < 0)<br>
+        <i style="background:red;width:12px;height:12px;display:inline-block"></i> Kualitas Udara Memburuk (% > 0)
+        </div>
+        """
+        
+        m.get_root().html.add_child(folium.Element(legend_html))
+    
     st_folium(m, width=900, height=520)
 
+
+    # Rata-rata per stasiun
     st.subheader(f"Rata-rata {metric_col} per Stasiun")
     st.dataframe(
-        map_df[["station", "value"]]
-        .rename(columns={"value": f"Avg {metric_col}"})
+        df_map[["station", metric_col]]
+        .rename(columns={metric_col: f"Avg {metric_col}"})
         .sort_values(f"Avg {metric_col}", ascending=False)
         .reset_index(drop=True),
         use_container_width=True,
     )
+
+
+    # Peringkat stasiun
+    st.subheader(f"Peringkat Stasiun berdasarkan {metric_col}")
+
+    df_delta = df_delta.sort_values(by=metric_col, ascending=True).reset_index()
+    values = df_delta[metric_col]
+
+    fig, ax = plt.subplots(figsize=(10, 6))
+
+    threshold = values.mean()
+
+    colors_bar = [
+        "#5774B7" if v >= threshold else "#D3D3D3"
+        for v in values
+    ]
+
+    colors_percen_aqi = values.apply(lambda x: "green" if x < 0 else "red")
+
+    bars = ax.barh(
+        df_delta.station,
+        values,
+        color= colors_percen_aqi if metric_col == "Perubahan AQI (%)" else colors_bar,
+        edgecolor = 'none'
+    )
+
+    ax.axvline(0, color="black", linewidth=1)
+
+    for spine in ax.spines.values():
+        spine.set_visible(False)
+
+    for i, v in enumerate(values):
+        ax.text(
+            v,
+            i,
+            f"{v:.2f}",
+            va="center",
+            ha="left" if v > 0 else "right"
+        )
+
+    if metric_col != "Perubahan AQI (%)":
+        legend_elements = [
+            Patch(facecolor="#5774B7", label=f"{metric_col} > rata-rata"),
+            Patch(facecolor="#D3D3D3", label=f"{metric_col} < rata-rata")
+        ]
+
+        ax.legend(
+            handles=legend_elements,
+            loc="upper left",
+            bbox_to_anchor=(1.02, 1)
+        )
+    plt.tight_layout()
+    st.pyplot(fig)
+
+# === TAB 3 : ANALISIS KORELASI ====================================================
+with tab_korelasi:
+    # Pola musiman
+    if granularity != "Yearly":
+        st.subheader("Pola Musiman pada Variabel Polutan")
+        
+        polutan_select = st.multiselect("Pilih variabel polutan", POLLUTANTS, default=["PM2.5", "PM10"])
+        if not polutan_select:
+            st.warning("Pilih minimal satu variabel.")
+            st.stop()
+
+        df_filter["season"] = df_filter["month"].map(SEASON_MAPPING)
+        df_season = (
+            df_filter.groupby(['station','season'])[polutan_select]
+            .mean()
+            .reset_index()
+        )
+        station_order = df_season["station"].unique()
+
+        fig, axes = plt.subplots(3, 2, figsize=(14, 20))
+        axes = axes.flatten()
+
+        for i, pol in enumerate(polutan_select):
+            pivot = df_season.pivot(
+                index='station', 
+                columns='season', values=pol
+            ).reindex(station_order)
+
+            sns.heatmap(
+                pivot,
+                ax=axes[i],
+                cmap='RdYlGn_r',
+                annot=True,
+                fmt='.1f',
+                cbar=True,
+                vmin=df_season[pol].min(),
+                vmax=df_season[pol].max()
+            )
+
+            axes[i].set_title(pol)
+            axes[i].set_xlabel('')
+            axes[i].set_ylabel('')
+
+        for j in range(len(polutan_select), len(axes)):
+            fig.delaxes(axes[j])
+
+        plt.tight_layout()
+        st.pyplot(fig)
+
+
+    # Korelasi
+    st.subheader("Korelasi AQI vs Variabel Cuaca")
+    
+    all_param = POLLUTANTS + WEATHER_VARS
+    param_select = st.multiselect("Pilih variabel", all_param, default=WEATHER_VARS)
+    if not param_select:
+        st.warning("Pilih minimal satu variabel.")
+        st.stop()
+    
+    col_heatmap, col_scatter = st.columns([1, 2])
+
+    with col_heatmap:
+        st.markdown("#### Heatmap")
+        corr_matrix = df_filter[['AQI'] + param_select].corr()
+        correlation = corr_matrix.loc['AQI', param_select]
+        correlation = correlation.to_frame()
+        
+        fig, ax = plt.subplots(figsize=(10, 3 * len(param_select)))
+
+        sns.heatmap(
+            correlation,
+            ax=ax,
+            annot=True,
+            fmt=".2f",
+            cmap='coolwarm',
+            center=0,
+            linewidths=0.5,
+            annot_kws={"size": 34}
+        )
+
+        ax.set_title("Heatmap Korelasi Pearson")
+        ax.set_ylabel("")
+        ax.tick_params(axis='x', labelsize=34)
+        ax.tick_params(axis='y', labelsize=34)
+
+        cbar = ax.collections[0].colorbar
+        cbar.ax.tick_params(labelsize=28)
+        
+
+        plt.tight_layout()
+        st.pyplot(fig)
+
+
+    with col_scatter:
+        st.markdown("#### Scatterplot")
+        
+        fig, axes = plt.subplots(len(param_select), 2, figsize=(6, 2 * len(param_select)))
+        axes = axes.flatten()
+
+        for i, col in enumerate(param_select):
+            sns.regplot(
+                x=col,
+                y='AQI',
+                data=df_filter,
+                ax=axes[i],
+                scatter_kws={'alpha': 0.4},
+                line_kws={'color': 'red'}
+            )
+
+            axes[i].set_title(f'AQI vs {col}')
+            axes[i].set_xlabel("")
+            axes[i].set_ylabel("AQI")
+
+        for j in range(len(param_select), len(axes)):
+            fig.delaxes(axes[j])
+
+        plt.tight_layout()
+        st.pyplot(fig)
+
 
 st.caption('Copyright © Vini Emeralda 2026')
